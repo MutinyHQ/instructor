@@ -95,12 +95,7 @@ def _validate_model_from_json(
         raise ValueError(f"Failed to parse JSON: {e}") from e
     except Exception as e:
         logger.debug(f"Model validation error: {e}")
-        # Re-raise with more context
-        from ..core.exceptions import ValidationError as InstructorValidationError
-
-        raise InstructorValidationError(
-            f"Failed to validate model {cls.__name__}: {str(e)}"
-        ) from e
+        raise
 
 
 class OpenAISchema(BaseModel):
@@ -201,7 +196,6 @@ class OpenAISchema(BaseModel):
                 completion,
                 validation_context,
                 strict,
-                using_inbuilt_tools=mode == Mode.RESPONSES_TOOLS_WITH_INBUILT_TOOLS,
             )
 
         if not completion.choices:
@@ -556,29 +550,22 @@ class OpenAISchema(BaseModel):
         completion: Any,
         validation_context: Optional[dict[str, Any]] = None,
         strict: Optional[bool] = None,
-        using_inbuilt_tools: bool = False,
     ) -> BaseModel:
         from openai.types.responses import ResponseFunctionToolCall
 
-        if using_inbuilt_tools:
-            for message in completion.output:
-                if isinstance(message, ResponseFunctionToolCall):
-                    if message.name == cls.openai_schema["name"]:
-                        message = message
-                        break
-            else:
-                raise ValueError(
-                    f"You must call {cls.openai_schema['name']} in your response"
-                )
-
-        else:
-            message = completion.output[0]
-            assert (
-                message.name == cls.openai_schema["name"]  # type: ignore[index]
-            ), "Function name does not match"
+        tool_call_message = None
+        for message in completion.output:
+            if isinstance(message, ResponseFunctionToolCall):
+                if message.name == cls.openai_schema["name"]:
+                    tool_call_message = message
+                    break
+        if not tool_call_message:
+            raise ValueError(
+                f"You must call {cls.openai_schema['name']} in your response",
+            )
 
         return cls.model_validate_json(
-            message.arguments,  # type: ignore[attr-defined]
+            tool_call_message.arguments,  # type: ignore[attr-defined]
             context=validation_context,
             strict=strict,
         )
